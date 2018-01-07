@@ -29,26 +29,29 @@ static bool areSameVariable(const ValueDecl *First, const ValueDecl *Second) {
          First->getCanonicalDecl() == Second->getCanonicalDecl();
 }
 
-StatementMatcher LoopMatcher =
-    forStmt(hasLoopInit(declStmt(
-                hasSingleDecl(varDecl(hasInitializer(integerLiteral(equals(0))))
-                                  .bind("initVarName")))),
-            hasIncrement(unaryOperator(
-                hasOperatorName("++"),
-                hasUnaryOperand(declRefExpr(
-                    to(varDecl(hasType(isInteger())).bind("incVarName")))))),
-            hasCondition(binaryOperator(
-                hasOperatorName("<"),
-                hasLHS(ignoringParenImpCasts(declRefExpr(
-                    to(varDecl(hasType(isInteger())).bind("condVarName"))))),
-                hasRHS(expr(hasType(isInteger())))))).bind("forLoop");
-StatementMatcher arrayClause = arraySubscriptExpr(unless(hasDescendant(binaryOperator())), hasDescendant(declRefExpr(to(varDecl(hasType(isInteger())).bind("arrayIndex")))));
-StatementMatcher opClause[2] = {binaryOperator(hasOperatorName("+"), hasDescendant(arrayClause), unless(hasDescendant(binaryOperator()))) ,
-                                binaryOperator(hasOperatorName("-") , hasDescendant(arrayClause), unless(hasDescendant(binaryOperator())))
+StatementMatcher LoopMatcher = forStmt(hasLoopInit(declStmt(
+                                hasSingleDecl(varDecl(hasInitializer(integerLiteral(equals(0)))).bind("initVarName")))),
+                                hasIncrement(unaryOperator(hasOperatorName("++"),
+                                  hasUnaryOperand(declRefExpr(to(varDecl(hasType(isInteger())).bind("incVarName")))))),
+                                hasCondition(
+                                  binaryOperator(hasOperatorName("<"),
+                                  hasLHS(ignoringParenImpCasts(declRefExpr(to(varDecl(hasType(isInteger())).bind("condVarName"))))),
+                                  hasRHS(expr(hasType(isInteger())))))
+                                ).bind("forLoop");
+StatementMatcher arrayClause = arraySubscriptExpr(unless(hasDescendant(binaryOperator())),
+                                hasDescendant(declRefExpr(to(varDecl(hasType(isInteger())).bind("arrayIndex")))));
+StatementMatcher opClause[4] = {binaryOperator(hasOperatorName("+"),
+                                  hasDescendant(arrayClause), hasDescendant(declRefExpr(to(varDecl().bind("accOperator")))), unless(hasDescendant(binaryOperator()))) ,
+                                binaryOperator(hasOperatorName("-") ,
+                                  hasDescendant(arrayClause), hasDescendant(declRefExpr(to(varDecl().bind("accOperator")))), unless(hasDescendant(binaryOperator()))) ,
+                                binaryOperator(hasOperatorName("&") ,
+                                  hasDescendant(arrayClause), hasDescendant(declRefExpr(to(varDecl().bind("accOperator")))), unless(hasDescendant(binaryOperator()))) ,
+                                binaryOperator(hasOperatorName("|") ,
+                                  hasDescendant(arrayClause), hasDescendant(declRefExpr(to(varDecl().bind("accOperator")))), unless(hasDescendant(binaryOperator())))
 };
 StatementMatcher ReduceMatcher =
     binaryOperator(hasOperatorName("="), hasParent(compoundStmt(hasParent(LoopMatcher))) , hasRHS(anyOf(
-      opClause[0], opClause[1]))
+      opClause[0], opClause[1], opClause[2], opClause[3])), hasLHS(declRefExpr(to(varDecl().bind("accumulator"))))
     ).bind("reduce");
 
 class LoopPrinter : public MatchFinder::MatchCallback {
@@ -57,22 +60,26 @@ public :
       ASTContext *Context = Result.Context;
       const BinaryOperator *BO = Result.Nodes.getNodeAs<BinaryOperator>("reduce");
       // We do not want to convert header files!
-      if (!BO || !Context->getSourceManager().isWrittenInMainFile(BO->getOperatorLoc()))
+      if(!BO || !Context->getSourceManager().isWrittenInMainFile(BO->getOperatorLoc()))
         return;
       const VarDecl *IncVar = Result.Nodes.getNodeAs<VarDecl>("incVarName");
       const VarDecl *CondVar = Result.Nodes.getNodeAs<VarDecl>("condVarName");
       const VarDecl *InitVar = Result.Nodes.getNodeAs<VarDecl>("initVarName");
       const VarDecl *ArrayIndex = Result.Nodes.getNodeAs<VarDecl>("arrayIndex");
-      if (!areSameVariable(IncVar, CondVar) || !areSameVariable(IncVar, InitVar)){
-          return;
-      }else{
-        if(!areSameVariable(IncVar, ArrayIndex)){
-            llvm::outs() << "index is not from loop.\n";
-            return;
-        }
+      const VarDecl *AccOperator = Result.Nodes.getNodeAs<VarDecl>("accOperator");
+      const VarDecl *Accumulator = Result.Nodes.getNodeAs<VarDecl>("accumulator");
+
+      if(!areSameVariable(IncVar, CondVar) || !areSameVariable(IncVar, InitVar)){
+        return;
+      }else if(!areSameVariable(IncVar, ArrayIndex)){
+        return;
+      }else if(!areSameVariable(AccOperator, Accumulator)){
+        return;
       }
-      BO->dump();
-      llvm::outs() << "Potential array-based loop discovered.\n";
+    //  BO->dump();
+      llvm::outs() << "Potential Reduce pattern, in the next line you'll find the file and the suspect line.\n";
+      BO->getExprLoc().dump(Context->getSourceManager());
+      llvm::outs() << "\n";
     }
 };
 int main(int argc, const char **argv) {

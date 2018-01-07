@@ -26,7 +26,7 @@ int main(){
     }
 
     for(int i = 0; i < ARRAYSIZE; i++){
-        sum = sum + sum;
+        sum  = sum + sum;
     }
 
     for(int i = 0; i < ARRAYSIZE; i++){
